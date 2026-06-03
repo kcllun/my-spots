@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我的菇點管理系統</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📍</text></svg>">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #0f172a; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 10px; }
+        .spot-card { transition: all 0.3s ease; border: 1px solid #1e293b; display: flex; flex-direction: column; position: relative; }
+        .spot-card:hover { transform: translateY(-3px); border-color: #10b981; }
+        .img-container { aspect-ratio: 16 / 9; overflow: hidden; background: #1e293b; border-bottom: 1px solid #1e293b; cursor: zoom-in; }
+        .img-container img { width: 100%; height: 100%; object-fit: cover; }
+        .edit-input { background: rgba(30, 41, 59, 0.9); border: 1px solid #10b981; border-radius: 6px; padding: 4px 8px; width: 100%; color: #fff; font-size: 13px; }
+        #toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: rgba(6, 78, 59, 0.9); color: #ecfdf5; padding: 10px 24px; border-radius: 50px; z-index: 1000; transition: opacity 0.3s; opacity: 0; pointer-events: none; border: 1px solid #059669; }
+        .hidden-element { display: none !important; }
+        .action-btn { background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(4px); width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: all 0.2s; border: 1px solid rgba(255,255,255,0.1); }
+        .compact-gap { margin-top: 0.25rem; margin-bottom: 0.25rem; }
+        #fullImg { max-width: 95vw; max-height: 95vh; width: auto; height: auto; object-fit: contain; }
+    </style>
+</head>
+<body class="custom-scrollbar">
+    <div id="toast">✅ 已更新</div>
+    
+    <div id="imgModal" class="fixed inset-0 bg-black/90 z-[2000] hidden items-center justify-center cursor-zoom-out" onclick="this.style.display='none'">
+        <img id="fullImg" src="" alt="放大圖片">
+    </div>
+    
+    <header class="sticky top-0 z-30 bg-[#0f172a]/95 backdrop-blur-md border-b border-slate-800 p-4">
+        <div class="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4">
+            <h1 class="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-teal-400">📍 菇點管理</h1>
+            <div class="flex flex-wrap items-center gap-3">
+                <button onclick="exportData()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs px-3 py-2 rounded-full">📤 匯出資料</button>
+                <button onclick="importData()" class="bg-purple-600 hover:bg-purple-500 text-white text-xs px-3 py-2 rounded-full">📥 匯入資料</button>
+                <button onclick="resetAllMarks()" class="bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs px-3 py-2 rounded-full border border-slate-700">重置記號 ❌</button>
+                <input type="text" id="searchInput" placeholder="搜尋標題或備註..." class="bg-slate-800 border border-slate-700 rounded-full px-5 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500 w-48 text-sm">
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto p-6"><div id="galleryGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"></div></main>
+    
+    <button onclick="openAddModal()" class="fixed bottom-8 right-8 w-14 h-14 bg-emerald-600 hover:bg-emerald-500 rounded-full shadow-2xl flex items-center justify-center text-3xl z-40 transition-transform active:scale-90 text-white">＋</button>
+
+    <div id="addModal" class="fixed inset-0 bg-black/80 hidden z-[100] flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-700 p-6 rounded-2xl w-full max-w-md">
+            <h2 class="text-xl font-bold mb-4 text-emerald-400">新增菇點</h2>
+            <div class="space-y-3">
+                <input id="newTitle" placeholder="標題" class="edit-input">
+                <input id="newCoords" placeholder="座標" class="edit-input">
+                <input id="newNote" placeholder="備註" class="edit-input">
+                <input id="newImg" placeholder="圖片檔名 (例如: 01.jpg)" class="edit-input">
+            </div>
+            <div class="flex gap-3 mt-6">
+                <button onclick="toggleAddModal(false)" class="flex-1 bg-slate-800 py-2 rounded-xl">取消</button>
+                <button onclick="addNewSpot()" class="flex-1 bg-emerald-600 py-2 rounded-xl font-bold">儲存</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let spots = JSON.parse(localStorage.getItem('myGuguSpots')) || [];
+        function save() { localStorage.setItem('myGuguSpots', JSON.stringify(spots)); }
+        
+        function refresh() { renderGallery(document.getElementById('searchInput').value); }
+
+        function renderGallery(filter = '') {
+            const grid = document.getElementById('galleryGrid'); grid.innerHTML = '';
+            const lowFilter = filter.toLowerCase();
+
+            let filtered = spots.filter(s => {
+                const titleMatch = s.title.toLowerCase().includes(lowFilter);
+                const noteMatch = (s.note || '').toLowerCase().includes(lowFilter);
+                return titleMatch || noteMatch;
+            }).sort((a, b) => (a.isFavorite === b.isFavorite) ? b.id - a.id : (a.isFavorite ? -1 : 1));
+            
+            filtered.forEach(spot => {
+                const card = document.createElement('div'); card.className = 'spot-card bg-slate-900 rounded-2xl overflow-hidden';
+                
+                // 修正圖片路徑：支援相對路徑
+                let displayImg = 'https://via.placeholder.com/400x225/1e293b/64748b?text=No+Image';
+                if (spot.img) {
+                    displayImg = spot.img.startsWith('http') ? spot.img : './' + spot.img;
+                }
+                
+                card.innerHTML = `
+                    <div class="absolute top-2 right-2 z-10 flex gap-2">
+                        <button onclick="toggleMark(${spot.id}, event)" class="action-btn ${spot.isMarked ? 'text-red-500' : 'text-slate-400'}">${spot.isMarked ? '❌' : '✖️'}</button>
+                        <button onclick="toggleFavorite(${spot.id}, event)" class="action-btn ${spot.isFavorite ? 'text-red-500' : 'text-slate-400'}">${spot.isFavorite ? '❤️' : '🤍'}</button>
+                    </div>
+                    <div class="img-container" onclick="openImage('${displayImg}')">
+                        <img src="${displayImg}" onerror="this.src='https://via.placeholder.com/400x225/1e293b/64748b?text=Not+Found'">
+                    </div>
+                    <div class="p-4 flex flex-col flex-grow">
+                        <input type="text" value="${spot.title}" onchange="updateField(${spot.id}, 'title', this.value)" class="bg-transparent border-none text-slate-100 font-bold text-base w-full focus:ring-0 p-0">
+                        
+                        <div class="compact-gap">
+                            <div id="note-display-${spot.id}" class="text-xs text-slate-500 cursor-pointer hover:text-emerald-400 min-h-[1.2em]" onclick="showEdit('${spot.id}', 'note')">
+                                ${spot.note || '<span class="italic text-slate-700">無備註...</span>'}
+                            </div>
+                            <div id="note-edit-${spot.id}" class="hidden-element">
+                                <input type="text" id="note-input-${spot.id}" value="${spot.note || ''}" class="edit-input" onblur="hideEdit('${spot.id}', 'note')" onkeydown="if(event.key==='Enter') this.blur()">
+                            </div>
+                        </div>
+
+                        <div id="img-edit-${spot.id}" class="hidden-element my-2">
+                            <input type="text" id="img-input-${spot.id}" value="${spot.img || ''}" class="edit-input" placeholder="圖片檔名..." onblur="hideEdit('${spot.id}', 'img')" onkeydown="if(event.key==='Enter') this.blur()">
+                        </div>
+
+                        <div class="mt-auto">
+                            <div id="coords-container-${spot.id}" class="bg-slate-950 rounded-lg p-2 border border-slate-800 cursor-pointer hover:bg-slate-800 group relative">
+                                <div id="coords-display-${spot.id}" class="flex justify-between items-center" onclick="copyText('${spot.coords}')">
+                                    <code class="text-[11px] text-emerald-400 font-mono">${spot.coords}</code>
+                                    <span class="text-slate-700 group-hover:text-emerald-400 text-[10px]">📋</span>
+                                </div>
+                                <div id="coords-edit-${spot.id}" class="hidden-element">
+                                    <input type="text" id="coords-input-${spot.id}" value="${spot.coords}" class="edit-input text-[11px] font-mono" onblur="hideEdit('${spot.id}', 'coords')" onkeydown="if(event.key==='Enter') this.blur()">
+                                </div>
+                            </div>
+                            
+                            <div class="flex justify-between items-center mt-2">
+                                <div class="flex gap-3">
+                                    <button onclick="showEdit('${spot.id}', 'img')" class="text-[10px] text-slate-500 hover:text-emerald-400">✏️ 檔名</button>
+                                    <button onclick="showEdit('${spot.id}', 'note')" class="text-[10px] text-slate-500 hover:text-emerald-400">✏️ 備註</button>
+                                    <button onclick="showEdit('${spot.id}', 'coords')" class="text-[10px] text-slate-500 hover:text-emerald-400">✏️ 座標</button>
+                                </div>
+                                <button onclick="deleteSpot(${spot.id})" class="text-[10px] text-slate-700 hover:text-red-500">🗑️ 刪除</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                grid.appendChild(card);
+            });
+        }
+
+        // 資料匯出功能
+        function exportData() {
+            const dataStr = JSON.stringify(spots);
+            navigator.clipboard.writeText(dataStr).then(() => {
+                alert("🎉 資料已成功複製到剪貼簿！請將它傳送到你的 LINE 或其他電腦/手機上。");
+            }).catch(() => {
+                prompt("請複製下方框內的整串文字以進行備份：", dataStr);
+            });
+        }
+
+        // 資料匯入功能
+        function importData() {
+            const dataStr = prompt("請貼上您之前匯出的整串資料文字：");
+            if (dataStr) {
+                try {
+                    const parsed = JSON.parse(dataStr);
+                    if (Array.isArray(parsed)) {
+                        spots = parsed;
+                        save();
+                        refresh();
+                        showToast("📥 資料匯入成功！");
+                    } else { alert("資料格式不正確！"); }
+                } catch(e) { alert("資料解析失敗，請確認是否複製完整。"); }
+            }
+        }
+
+        function showEdit(id, type) {
+            document.getElementById(`${type}-display-${id}`)?.classList.add('hidden-element');
+            const editDiv = document.getElementById(`${type}-edit-${id}`);
+            editDiv.classList.remove('hidden-element');
+            const input = document.getElementById(`${type}-input-${id}`);
+            input.focus(); input.select();
+        }
+
+        function hideEdit(id, type) {
+            const input = document.getElementById(`${type}-input-${id}`);
+            updateField(parseInt(id), type, input.value);
+        }
+
+        function updateField(id, field, value) {
+            const idx = spots.findIndex(s => s.id === id);
+            if (idx !== -1) {
+                spots[idx][field] = value;
+                save(); showToast('✅ 已儲存'); refresh();
+            }
+        }
+
+        function copyText(text) { navigator.clipboard.writeText(text); showToast('📋 座標已複製'); }
+        function showToast(msg) { const t = document.getElementById('toast'); t.innerText = msg; t.style.opacity = '1'; setTimeout(() => t.style.opacity = '0', 2000); }
+        function resetAllMarks() { if (confirm(`重置所有記號？`)) { spots.forEach(s => s.isMarked = false); save(); refresh(); } }
+        function toggleAddModal(show) { document.getElementById('addModal').classList.toggle('hidden', !show); }
+        function openAddModal() { toggleAddModal(true); }
+        function openImage(url) { const m = document.getElementById('imgModal'); document.getElementById('fullImg').src = url; m.style.display = 'flex'; }
+        
+        function addNewSpot() { 
+            const title = document.getElementById('newTitle').value;
+            const coords = document.getElementById('newCoords').value;
+            if (!title || !coords) return;
+            spots.unshift({ id: Date.now(), title, coords, note: document.getElementById('newNote').value, img: document.getElementById('newImg').value, isFavorite: false, isMarked: false });
+            save(); toggleAddModal(false); refresh(); 
+        }
+        function deleteSpot(id) { if(confirm('刪除？')) { spots = spots.filter(s => s.id !== id); save(); refresh(); } }
+        function toggleFavorite(id, e) { e.stopPropagation(); const i = spots.findIndex(s => s.id === id); spots[i].isFavorite = !spots[i].isFavorite; save(); refresh(); }
+        function toggleMark(id, e) { e.stopPropagation(); const i = spots.findIndex(s => s.id === id); spots[i].isMarked = !spots[i].isMarked; save(); refresh(); }
+        document.getElementById('searchInput').addEventListener('input', (e) => renderGallery(e.target.value));
+        renderGallery();
+    </script>
+</body>
+</html>
